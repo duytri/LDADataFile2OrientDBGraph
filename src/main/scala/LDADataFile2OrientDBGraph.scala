@@ -15,12 +15,16 @@ import com.tinkerpop.blueprints.Edge
 import com.tinkerpop.blueprints.Direction
 
 object LDADataFile2OrientDBGraph {
-  
+
   def main(args: Array[String]): Unit = {
+    val rootDir = "C:\\Users\\duytr\\Desktop\\CayChuDe_GiaoDuc\\CayChuDe_GiaoDuc"
     val odbName = "ODBGiaoDuc"
-    val WorkEdgeLabel = "Work"
+    val topicTopicEdgeLabel = "coChuDe"
+    val topicWordEdgeLabel = "coTuKhoa"
+    val dataFileName = "DataTrain.txt"
+
     // opens the DB (if not existing, it will create it)
-    val uri: String = "plocal:/home/duytri/orientdb/databases/" + odbName
+    val uri: String = "plocal:C:/orientdb/databases/" + odbName
     val factory: OrientGraphFactory = new OrientGraphFactory(uri)
     val graph: OrientGraph = factory.getTx()
 
@@ -28,26 +32,19 @@ object LDADataFile2OrientDBGraph {
 
       // if the database does not contain the classes we need (it was just created),
       // then adds them
-      if (graph.getVertexType("Person") == null) {
+      if (graph.getVertexType("CHUDE") == null) {
 
         // we now extend the Vertex class for Person and Company
-        val person: OrientVertexType = graph.createVertexType("Person")
-        person.createProperty("firstName", OType.STRING)
-        person.createProperty("lastName", OType.STRING)
+        val topic: OrientVertexType = graph.createVertexType("CHUDE")
+        topic.createProperty("TenChuDe", OType.STRING)
 
-        val company: OrientVertexType = graph.createVertexType("Company")
-        company.createProperty("name", OType.STRING)
-        company.createProperty("revenue", OType.LONG)
+        val word: OrientVertexType = graph.createVertexType("TUKHOA")
+        word.createProperty("NoiDung", OType.STRING)
 
-        val project: OrientVertexType = graph.createVertexType("Project")
-        project.createProperty("name", OType.STRING)
-
-        // we now extend the Edge class for a "Work" relationship
-        // between Person and Company
-        val work: OrientEdgeType = graph.createEdgeType(WorkEdgeLabel)
-        work.createProperty("startDate", OType.DATE)
-        work.createProperty("endDate", OType.DATE)
-        work.createProperty("projects", OType.LINKSET)
+        // we now extend the Edge class for a "CHUDE" relationship
+        // between (CHUDE and CHUDE) or (CHUDE and TUKHOA)
+        val topictopic: OrientEdgeType = graph.createEdgeType(topicTopicEdgeLabel)
+        val topicword: OrientEdgeType = graph.createEdgeType(topicWordEdgeLabel)
 
         graph.commit()
 
@@ -58,74 +55,83 @@ object LDADataFile2OrientDBGraph {
         graph.commit()
       }
 
-      // adds some people
-      // (we have to force a vararg call in addVertex() method to avoid ambiguous
-      // reference compile error, which is pretty ugly)
-      val johnDoe: Vertex = graph.addVertex("class:Person", Nil: _*)
-      johnDoe.setProperty("firstName", "John")
-      johnDoe.setProperty("lastName", "Doe")
-      graph.commit()
+      //create main topic vertex
+      val topicGiaoDuc: Vertex = graph.addVertex("class:CHUDE", "TenChuDe", "Giáo dục")
 
-      // we can also set properties directly in the constructor call
-      val johnSmith: Vertex = graph.addVertex("class:Person", "firstName", "John", "lastName", "Smith")
-      val janeDoe: Vertex = graph.addVertex("class:Person", "firstName", "Jane", "lastName", "Doe")
-      graph.commit()
-
-      // creates a Company
-      val acme: Vertex = graph.addVertex("class:Company", "name", "ACME", "revenue", "10000000")
-      graph.commit()
-
-      // creates a couple of projects
-      val acmeGlue: Vertex = graph.addVertex("class:Project", "name", "ACME Glue")
-      val acmeRocket: Vertex = graph.addVertex("class:Project", "name", "ACME Rocket")
-      graph.commit()
-
-      // creates edge JohnDoe worked for ACME
-      val johnDoeAcme: Edge = graph.addEdge(null, johnDoe, acme, WorkEdgeLabel)
-      johnDoeAcme.setProperty("startDate", "2010-01-01")
-      johnDoeAcme.setProperty("endDate", "2013-04-21")
-      var hsProjs = new HashSet[Vertex]()
-      hsProjs.add(acmeGlue)
-      hsProjs.add(acmeRocket)
-      johnDoeAcme.setProperty("projects", hsProjs)
-      graph.commit()
-
-      // another way to create an edge, starting from the source vertex
-      val johnSmithAcme: Edge = johnSmith.addEdge(WorkEdgeLabel, acme)
-      johnSmithAcme.setProperty("startDate", "2009-01-01")
-      graph.commit()
-
-      // prints all the people who works/worked for ACME
-      val res: Iterable[OrientVertex] = graph
-        .command(new OCommandSQL(s"SELECT expand(in('${WorkEdgeLabel}')) FROM Company WHERE name='ACME'"))
-        .execute()
-
-      println("ACME people:")
-      val result = res.iterator()
-      while (result.hasNext()) {
-        val person = result.next()
-        val workEdgeIterator = person.getEdges(Direction.OUT, WorkEdgeLabel).iterator()
-        val edge = workEdgeIterator.next()
-
-        // retrieves worker's info
-        val status = if (edge.getProperty("endDate") != null) "retired" else "active"
-
-        val iterVertex: Iterable[Vertex] = edge.getProperty("projects")
-
-        var projects = ""
-        if (iterVertex != null) {
-          val setVertex = iterVertex.iterator();
-          while (setVertex.hasNext()) {
-            val vertex = setVertex.next()
-            projects += vertex.getProperty("name").toString() + ", ";
+      val listFoldersLevel1 = Utils.getListOfFolders(rootDir)
+      listFoldersLevel1.foreach { folder1 =>
+        {
+          //add vertex of topic and edge between them
+          val topicLevel1: Vertex = graph.addVertex("class:CHUDE", "TenChuDe", folder1.getName)
+          topicGiaoDuc.addEdge(topicTopicEdgeLabel, topicLevel1)
+          graph.commit()
+          //add vertex of words and edge between word and topic
+          val dataFileDir = folder1.getAbsolutePath + "\\" + dataFileName
+          println(dataFileDir)
+          val dataLines = Utils.getLines(dataFileDir)
+          dataLines.foreach { line =>
+            {
+              val words = line.split(" ")
+              words.foreach { word =>
+                {
+                  val wordLevel1: Vertex = graph.addVertex("class:TUKHOA", "NoiDung", word)
+                  topicLevel1.addEdge(topicWordEdgeLabel, wordLevel1)
+                  graph.commit()
+                }
+              }
+            }
           }
-          projects = projects.substring(0, projects.length() - 2);
-        } else
-          projects = "Any project"
-
-        // and prints them
-        System.out.println("Name: " + person.getProperty("lastName") + " " + person.getProperty("firstName")
-          + ", " + status + ", Worked on: " + projects + ".")
+          val listFoldersLevel2 = Utils.getListOfFolders(folder1.getAbsoluteFile)
+          if (listFoldersLevel2.length > 0)
+            listFoldersLevel2.foreach { folder2 =>
+              {
+                //add vertex of topic and edge between them
+                val topicLevel2: Vertex = graph.addVertex("class:CHUDE", "TenChuDe", folder2.getName)
+                topicLevel1.addEdge(topicTopicEdgeLabel, topicLevel2)
+                graph.commit()
+                //add vertex of words and edge between word and topic
+                val dataFileDir = folder2.getAbsolutePath + "\\" + dataFileName
+                val dataLines = Utils.getLines(dataFileDir)
+                dataLines.foreach { line =>
+                  {
+                    val words = line.split(" ")
+                    words.foreach { word =>
+                      {
+                        val wordLevel2: Vertex = graph.addVertex("class:TUKHOA", "NoiDung", word)
+                        topicLevel2.addEdge(topicWordEdgeLabel, wordLevel2)
+                        graph.commit()
+                      }
+                    }
+                  }
+                }
+                val listFoldersLevel3 = Utils.getListOfFolders(folder2.getAbsoluteFile)
+                if (listFoldersLevel3.length > 0)
+                  listFoldersLevel3.foreach { folder3 =>
+                    {
+                      //add vertex of topic and edge between them
+                      val topicLevel3: Vertex = graph.addVertex("class:CHUDE", "TenChuDe", folder3.getName)
+                      topicLevel2.addEdge(topicTopicEdgeLabel, topicLevel3)
+                      graph.commit()
+                      //add vertex of words and edge between word and topic
+                      val dataFileDir = folder3.getAbsolutePath + "\\" + dataFileName
+                      val dataLines = Utils.getLines(dataFileDir)
+                      dataLines.foreach { line =>
+                        {
+                          val words = line.split(" ")
+                          words.foreach { word =>
+                            {
+                              val wordLevel3: Vertex = graph.addVertex("class:TUKHOA", "NoiDung", word)
+                              topicLevel3.addEdge(topicWordEdgeLabel, wordLevel3)
+                              graph.commit()
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+              }
+            }
+        }
       }
     } catch {
       case t: Throwable => {
@@ -137,6 +143,6 @@ object LDADataFile2OrientDBGraph {
     } finally {
       graph.shutdown()
       factory.close()
-}
+    }
   }
 }
