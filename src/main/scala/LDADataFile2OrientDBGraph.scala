@@ -9,11 +9,16 @@ import com.orientechnologies.orient.core.sql.OCommandSQL
 import com.tinkerpop.blueprints.impls.orient.OrientVertex
 import com.orientechnologies.orient.core.metadata.schema.OType
 
+import java.util.HashSet
+import java.lang.Iterable
+import com.tinkerpop.blueprints.Edge
+import com.tinkerpop.blueprints.Direction
+
 object LDADataFile2OrientDBGraph {
   
   def main(args: Array[String]): Unit = {
     val odbName = "ODBGiaoDuc"
-    val titleEdgeLabel = ""
+    val WorkEdgeLabel = "Work"
     // opens the DB (if not existing, it will create it)
     val uri: String = "plocal:/home/duytri/orientdb/databases/" + odbName
     val factory: OrientGraphFactory = new OrientGraphFactory(uri)
@@ -21,68 +26,107 @@ object LDADataFile2OrientDBGraph {
 
     try {
 
-      var giaoduc: Vertex = null
+      // if the database does not contain the classes we need (it was just created),
+      // then adds them
+      if (graph.getVertexType("Person") == null) {
 
-      if (dropFlag == true) {
+        // we now extend the Vertex class for Person and Company
+        val person: OrientVertexType = graph.createVertexType("Person")
+        person.createProperty("firstName", OType.STRING)
+        person.createProperty("lastName", OType.STRING)
 
-        if (graph.getVertexType("CHU_DE") == null) {
+        val company: OrientVertexType = graph.createVertexType("Company")
+        company.createProperty("name", OType.STRING)
+        company.createProperty("revenue", OType.LONG)
 
-          // we now extend the Vertex class for CHU DE and BAI VIET
-          val title: OrientVertexType = graph.createVertexType("CHU_DE")
-          title.createProperty("Ten", OType.STRING)
+        val project: OrientVertexType = graph.createVertexType("Project")
+        project.createProperty("name", OType.STRING)
 
-          val document: OrientVertexType = graph.createVertexType("BAI_VIET")
-          document.createProperty("MongoId", OType.STRING)
-          document.createProperty("Noi_Dung", OType.STRING)
+        // we now extend the Edge class for a "Work" relationship
+        // between Person and Company
+        val work: OrientEdgeType = graph.createEdgeType(WorkEdgeLabel)
+        work.createProperty("startDate", OType.DATE)
+        work.createProperty("endDate", OType.DATE)
+        work.createProperty("projects", OType.LINKSET)
 
-          // we now extend the Edge class for a "CO CHU DE" relationship
-          // between CHU DE and BAI VIET
-          val hasTitle: OrientEdgeType = graph.createEdgeType(titleEdgeLabel)
-          hasTitle.createProperty("co_Chu_De", OType.LINK)
-
-          graph.commit()
-
-        } else {
-          // cleans up the DB since it was already created in a preceding run
-          graph.command(new OCommandSQL("DELETE VERTEX V")).execute()
-          graph.command(new OCommandSQL("DELETE EDGE E")).execute()
-          graph.commit()
-        }
-
-        //create CHU DE - Giao Duc vertex
-        giaoduc = graph.addVertex("class:CHU_DE", "Ten", "Giao_Duc")
         graph.commit()
-      } else {
-        val res: Iterable[OrientVertex] = graph
-          .command(new OCommandSQL(s"SELECT FROM CHU_DE WHERE Ten='Giao_Duc'"))
-          .execute()
 
-        giaoduc = res.iterator.next()
+      } else {
+        // cleans up the DB since it was already created in a preceding run
+        graph.command(new OCommandSQL("DELETE VERTEX V")).execute()
+        graph.command(new OCommandSQL("DELETE EDGE E")).execute()
+        graph.commit()
       }
 
-      val cols = getCollection("allvnexpress", "all")
+      // adds some people
+      // (we have to force a vararg call in addVertex() method to avoid ambiguous
+      // reference compile error, which is pretty ugly)
+      val johnDoe: Vertex = graph.addVertex("class:Person", Nil: _*)
+      johnDoe.setProperty("firstName", "John")
+      johnDoe.setProperty("lastName", "Doe")
+      graph.commit()
 
-      val filerValue: Document = new Document("subject", "Giáo dục")
+      // we can also set properties directly in the constructor call
+      val johnSmith: Vertex = graph.addVertex("class:Person", "firstName", "John", "lastName", "Smith")
+      val janeDoe: Vertex = graph.addVertex("class:Person", "firstName", "Jane", "lastName", "Doe")
+      graph.commit()
 
-      val result = cols.find(filerValue)
-      var rowCount = 1
-      result.forEach(new Block[Document]() {
-        @Override
-        def apply(document: Document): Unit = {
-          //create vertex
-          val oneDoc: Vertex = graph.addVertex("class:BAI_VIET", Nil: _*)
-          oneDoc.setProperty("MongoId", document.get("_id").toString())
-          oneDoc.setProperty("Noi_Dung", document.get("content").toString().replaceAll("\t", ""))
+      // creates a Company
+      val acme: Vertex = graph.addVertex("class:Company", "name", "ACME", "revenue", "10000000")
+      graph.commit()
 
-          //create edge
-          val johnDoeAcme: Edge = graph.addEdge(null, oneDoc, giaoduc, titleEdgeLabel)
-          johnDoeAcme.setProperty("co_Chu_De", giaoduc)
-          graph.commit()
-          println("Inserted " + rowCount + " row(s)!")
-          rowCount += 1
-        }
-      })
+      // creates a couple of projects
+      val acmeGlue: Vertex = graph.addVertex("class:Project", "name", "ACME Glue")
+      val acmeRocket: Vertex = graph.addVertex("class:Project", "name", "ACME Rocket")
+      graph.commit()
 
+      // creates edge JohnDoe worked for ACME
+      val johnDoeAcme: Edge = graph.addEdge(null, johnDoe, acme, WorkEdgeLabel)
+      johnDoeAcme.setProperty("startDate", "2010-01-01")
+      johnDoeAcme.setProperty("endDate", "2013-04-21")
+      var hsProjs = new HashSet[Vertex]()
+      hsProjs.add(acmeGlue)
+      hsProjs.add(acmeRocket)
+      johnDoeAcme.setProperty("projects", hsProjs)
+      graph.commit()
+
+      // another way to create an edge, starting from the source vertex
+      val johnSmithAcme: Edge = johnSmith.addEdge(WorkEdgeLabel, acme)
+      johnSmithAcme.setProperty("startDate", "2009-01-01")
+      graph.commit()
+
+      // prints all the people who works/worked for ACME
+      val res: Iterable[OrientVertex] = graph
+        .command(new OCommandSQL(s"SELECT expand(in('${WorkEdgeLabel}')) FROM Company WHERE name='ACME'"))
+        .execute()
+
+      println("ACME people:")
+      val result = res.iterator()
+      while (result.hasNext()) {
+        val person = result.next()
+        val workEdgeIterator = person.getEdges(Direction.OUT, WorkEdgeLabel).iterator()
+        val edge = workEdgeIterator.next()
+
+        // retrieves worker's info
+        val status = if (edge.getProperty("endDate") != null) "retired" else "active"
+
+        val iterVertex: Iterable[Vertex] = edge.getProperty("projects")
+
+        var projects = ""
+        if (iterVertex != null) {
+          val setVertex = iterVertex.iterator();
+          while (setVertex.hasNext()) {
+            val vertex = setVertex.next()
+            projects += vertex.getProperty("name").toString() + ", ";
+          }
+          projects = projects.substring(0, projects.length() - 2);
+        } else
+          projects = "Any project"
+
+        // and prints them
+        System.out.println("Name: " + person.getProperty("lastName") + " " + person.getProperty("firstName")
+          + ", " + status + ", Worked on: " + projects + ".")
+      }
     } catch {
       case t: Throwable => {
         println("************************ ERROR ************************")
@@ -93,6 +137,6 @@ object LDADataFile2OrientDBGraph {
     } finally {
       graph.shutdown()
       factory.close()
-    }
+}
   }
 }
